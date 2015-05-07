@@ -39,10 +39,28 @@
       <HintPath>UnityEngine.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AssemblyInfo.cs" />
     <Compile Include="Kasselblad.cs" />
+    <Compile Include="MovieTime\RandomJitter.cs" />
+    <Compile Include="MovieTime\VHoldRoller.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilter.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterBlackAndWhiteFilm.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterBlackAndWhiteHiResTV.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterBlackAndWhiteLoResTV.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterColorFilm.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterColorHiResTV.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterColorLoResTV.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterNightVision.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterNormal.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterSepiaFilm.cs" />
+    <Compile Include="MovieTime\CameraFilters\CameraFilterThermal.cs" />
+    <Compile Include="MovieTime\Settings.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
+  <ItemGroup>
+    <Folder Include="MovieTime\" />
+  </ItemGroup>
 </Project>
