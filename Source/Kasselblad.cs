@@ -1,53 +1,52 @@
 using UnityEngine;
 using System;
-
 using KSP.IO;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace Kasselblad
 {
 	public class Kasselblad : PartModule
 	{
-		/*** Settings ***/
 
-		
-		[KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "FoV"),
-		 UI_FloatRange(minValue = 30.0f, maxValue = 90.0f, stepIncrement = 5.0f)]
+		#region Settings
+		[KSPField]
+		public Vector3 cameraPos = new Vector3(0,0,0);
+
+		[KSPField]
+		public Vector3 cameraRot = new Vector3(0,0,0);
+
+		[KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Field of View"), UI_FloatRange(minValue = 10.0f, maxValue = 120.0f, stepIncrement = 10.0f)]
 		public float camFoV = 60.0f;
 
-		public enum CamStyle {
-			LazorDP,
+		
+		[KSPField]
+		public Vector2 cameraRes = new Vector2(320,240);
 
-			MT_BnW0,
-			MT_BnW1,
-			MT_BnW2,
-			
-			MT_COLOR0,
-			MT_COLOR1,
-			MT_COLOR2,
-			
-			MT_SEPIA,
-			MT_NORMAL,
-			MT_THERMAL,
-			MT_NIGHTVISION,
 
-		};
+		[KSPField(isPersistant = false)]
+		public float consumeRate = 0.2f;
 
-		/*** Events ***/
+
+		public bool _camSwitchedOn = true;
+		public bool _hasPower = true;
+
+		#endregion
+		#region Events
 
 		[KSPEvent(guiActive = true, guiActiveUnfocused = true, unfocusedRange = 20.0f, guiActiveEditor = false, guiName = "Switch On")]
 		public void toggleOnOff()
 		{
-			_camEnabled = !_camEnabled;
-			
-			for (int i = 0; i < 3; i++)
-				_cams [i].enabled = _camEnabled;
-			
-			Events["toggleOnOff"].guiName = _camEnabled ? "Switch Off" : "Switch On";
+			_camSwitchedOn = !_camSwitchedOn;
+			UpdateCameraState ();
+
+			Events["toggleOnOff"].guiName = _camSwitchedOn ? "Switch Off" : "Switch On";
 		}
 		
 
 
-		/*** Common Methods ***/
+		#endregion
+		#region Common Methods
 
 		public override void OnStart (StartState state)
 		{
@@ -57,7 +56,7 @@ namespace Kasselblad
 				InitRTT();
 
 				// Initialize the action state
-				Events["toggleOnOff"].guiName = _camEnabled ? "Switch Off" : "Switch On";
+				Events["toggleOnOff"].guiName = _camSwitchedOn ? "Switch Off" : "Switch On";
 
 				// Create our windows. TODO: Should we do this in the editor too, for preview?
 				if (_windowStyle == null) InitStyles();
@@ -74,18 +73,158 @@ namespace Kasselblad
 			if (scene != GameScenes.FLIGHT)
 				return;
 
+				if (_camSwitchedOn)
+				{
+					double requested = consumeRate * TimeWarp.deltaTime;
+					double granted = part.RequestResource("ElectricCharge", requested);
 
-			// TODO: Any camera animation should update here.
+					print ("Requested: " + requested + ", granted: " + granted);
+
+					_hasPower = (granted > requested / 2.0f);
+					UpdateCameraState();
+
+				}
 
 		}
 
-		/*** Settings management ***/
+		#endregion
+		#region Science
+
+		private static string[] ScienceNames = {"MunarIndustriesKasselblad_1", "MunarIndustriesKasselblad_2", "MunarIndustriesKasselblad_3"};
+		private static string[] DataNames = {"Black and White Photograph", "Color TV Capture", "High Res Photo"};
+
 		
+		private GUIStyle ScienceStyle;
+		private GUISkin SkinStored;
+		private GUIStyleState StyleDefault;
+
+
+		// Takes a picture and generates a science report.
+		public void DoScience ()
+		{
+			var experiment = ResearchAndDevelopment.GetExperiment (ScienceNames[(int)_camStyle]);
+			var body = this.vessel.mainBody;
+			var biome = ScienceUtil.GetExperimentBiome (body, this.vessel.latitude, this.vessel.longitude);
+			var situation = ScienceUtil.GetExperimentSituation (this.vessel);
+			var subject = ResearchAndDevelopment.GetExperimentSubject (experiment, situation, body, biome);
+
+			float existingScience = ResearchAndDevelopment.GetScienceValue(experiment.baseValue * experiment.dataScale, subject);
+			print ("Existing science for " + subject.title + " = " + existingScience);
+
+			int points = 10;
+
+			var data = new ScienceData(points, 1f, 0f, subject.id, DataNames[(int)_camStyle]);
+			StoredData.Add(data);
+
+			Texture2D photo = new Texture2D (_camTex.width, _camTex.height);
+			RenderTexture old = RenderTexture.active;
+			RenderTexture.active = _camTex;
+			photo.ReadPixels(new Rect(0, 0, _camTex.width, _camTex.height), 0, 0);
+			photo.Apply();
+			RenderTexture.active = old;
+
+			ReviewData(data, photo);
+		}
+
+		private List<ScienceData> StoredData = new List<ScienceData>();
+		private void ReviewData(ScienceData Data, Texture2D Screenshot) 
+		{
+			StartCoroutine(ReviewDataCoroutine(Data, Screenshot));
+		}
+
+		public System.Collections.IEnumerator ReviewDataCoroutine(ScienceData Data, Texture2D Screenshot)
+		{
+			yield return new WaitForEndOfFrame();
+
+			ExperimentResultDialogPage page = new ExperimentResultDialogPage
+				(
+					FlightGlobals.ActiveVessel.rootPart,    //hosting part
+					Data,                                   //Science data
+					Data.transmitValue,                     //scalar for transmitting the data
+					Data.labBoost,                          //scalar for lab bonuses
+					false,                                  //bool for show transmit warning
+					"",                                     //string for transmit warning
+					false,                                  //show the reset button
+					false,                                  //show the lab option
+					new Callback<ScienceData>(_onPageDiscard), 
+					new Callback<ScienceData>(_onPageKeep), 
+					new Callback<ScienceData>(_onPageTransmit), 
+					new Callback<ScienceData>(_onPageSendToLab)
+					);
+			
+			//page.scienceValue = 0f;
+			ExperimentsResultDialog ScienceDialog = ExperimentsResultDialog.DisplayResult(page);
+
+			//Store the old dialog gui information
+			GUIStyle style = ScienceDialog.guiSkin.box;
+			StyleDefault = style.normal;
+			SkinStored = ScienceDialog.guiSkin;
+			
+			////Lets put a pretty picture on the science dialog.
+			ScienceStyle = ScienceDialog.guiSkin.box;
+			ScienceStyle.normal.background = Screenshot;
+			
+			ScienceStyle.fixedWidth = 240f * cameraRes.x / cameraRes.y;
+			ScienceStyle.fixedHeight = 240f;
+
+			ScienceDialog.guiSkin.window.fixedWidth = ScienceStyle.fixedWidth + 75;
+		}
+
+		private void _onPageDiscard(ScienceData Data)
+		{
+			StoredData.Remove(Data);
+			ResetExperimentGUI();
+			return;
+		}
+
+		private void _onPageKeep(ScienceData Data)
+		{
+			StoredData.Add(Data);
+			ResetExperimentGUI();
+			return;
+		}
+
+		private void _onPageTransmit(ScienceData Data)
+		{
+			//Grab list of available antenneas
+			List<IScienceDataTransmitter> AvailableTransmitters = vessel.FindPartModulesImplementing<IScienceDataTransmitter>();
+			
+			if (AvailableTransmitters.Count() > 0)
+			{
+				AvailableTransmitters.First().TransmitData(new List<ScienceData>{ Data });
+			}
+			
+			ResetExperimentGUI();
+		}
+
+		private void _onPageSendToLab(ScienceData Data)
+		{
+			ResetExperimentGUI();
+			return;
+		}
+		private void ResetExperimentGUI()
+		{
+			//print("Resetting GUI...");
+			if (SkinStored != null)
+			{
+				SkinStored.box.normal = StyleDefault;
+				SkinStored.box.fixedWidth = 0f;
+				SkinStored.box.fixedHeight = 0f;
+				SkinStored.window.fixedWidth = 400f;
+			}
+			
+			ScienceStyle.fixedHeight = 0f;
+			ScienceStyle.fixedWidth = 0f;
+		}
+
+		#endregion
+		#region Persistence 
+
 		public override void OnSave (ConfigNode node)
 		{
 			PluginConfiguration config = PluginConfiguration.CreateForType<Kasselblad>();
 			config.SetValue ("Window Position", _windowPosition);
-			config.SetValue ("Camera Enabled", _camEnabled);
+			config.SetValue ("Camera Enabled", _camSwitchedOn);
 
 			config.save ();	
 		}
@@ -95,20 +234,60 @@ namespace Kasselblad
 			PluginConfiguration config = PluginConfiguration.CreateForType<Kasselblad>();
 			config.load ();
 
-			_windowPosition = config.GetValue<Rect> ("Window Position");
-			_camEnabled = config.GetValue<bool> ("Camera Enabled");
+			// Intentionally ignoring the width and height here.
+			Rect oldRect = config.GetValue<Rect> ("Window Position");
+			_windowPosition.x = oldRect.x;
+			_windowPosition.y = oldRect.y;
+
+			_camSwitchedOn = config.GetValue<bool> ("Camera Enabled");
+			UpdateCameraState ();
 		}
 
-		/*** Camera code! ***/
+		#endregion
+		#region Camera Management
+
+		public enum CamStyle {
+			BlackAndWhite,
+			AnalogColor,
+			DigitalColor
+		};
+
+		private CamStyle _camStyle;
+
+		public void SetStyle(Kasselblad.CamStyle style) {
+			_camStyle = style;
+			switch (style) {
+			case CamStyle.BlackAndWhite:
+				_movietimeFilter = new CameraFilterBlackAndWhiteLoResTV ();
+				_standbyTex = GameDatabase.Instance.GetTexture ("MunarIndustries/textures/TestPattern_NTSC", false);
+				break;
+			case CamStyle.AnalogColor:
+				_movietimeFilter = new CameraFilterColorLoResTV ();
+				_standbyTex = GameDatabase.Instance.GetTexture ("MunarIndustries/textures/ColorBars_NTSC", false);
+				break;
+			case CamStyle.DigitalColor:
+				_movietimeFilter = new CameraFilterNormal ();
+				_standbyTex = GameDatabase.Instance.GetTexture ("MunarIndustries/textures/ColorBars_NTSC", false);
+				break;
+			}
+			
+			_movietimeFilter.Activate (); // Is this necessary? who knows!
+		}
+
+		private Texture overlay;
+		private CameraFilter _movietimeFilter;
+		private RenderTexture _camTex;
+		private Texture _standbyTex;
+		private GameObject[] _camobjs = new GameObject[GameCameras.Length];
+		private Camera[] _cams = new Camera[GameCameras.Length];
+
+		private bool isCamEnabled() {
+			return _camSwitchedOn && _hasPower;
+		}
 
 		private static string[] GameCameras = {
 			"GalaxyCamera", "Camera ScaledSpace", "Camera 01", "Camera 00", "Camera VE Underlay", "Camera VE Overlay"
 		};
-
-		private RenderTexture _camTex;
-		private GameObject[] _camobjs = new GameObject[GameCameras.Length];
-		private Camera[] _cams = new Camera[GameCameras.Length];
-		private bool _camEnabled = true;
 
 		// Shader needed to fix the camera's output before processing
 		private Material dealphaMaterial = new Material (
@@ -127,78 +306,25 @@ namespace Kasselblad
 			"}"
 		);
 
-
-		// Other materials needed
-		
-		private Material grayscaleMaterial;
-		private Texture overlay;
-
-		private CameraFilter _movietimeFilter;
-
-		private CamStyle _style;
-
-		public void SetStyle(Kasselblad.CamStyle style) {
-			_style = style;
-
-			switch (style) {
-			case CamStyle.LazorDP:
-				_movietimeFilter = null;
-				break;
-			case CamStyle.MT_BnW0:
-				_movietimeFilter = new CameraFilterBlackAndWhiteFilm ();
-				break;
-			case CamStyle.MT_BnW1:
-				_movietimeFilter = new CameraFilterBlackAndWhiteLoResTV ();
-				break;
-			case CamStyle.MT_BnW2:
-				_movietimeFilter = new CameraFilterBlackAndWhiteHiResTV ();
-				break;
-			case CamStyle.MT_COLOR0:
-				_movietimeFilter = new CameraFilterColorFilm ();
-				break;
-			case CamStyle.MT_COLOR1:
-				_movietimeFilter = new CameraFilterColorLoResTV ();
-				break;
-			case CamStyle.MT_COLOR2:
-				_movietimeFilter = new CameraFilterColorHiResTV ();
-				break;
-			case CamStyle.MT_NIGHTVISION:
-				_movietimeFilter = new CameraFilterNightVision ();
-				break;
-			case CamStyle.MT_NORMAL:
-				_movietimeFilter = new CameraFilterNormal ();
-				break;
-			case CamStyle.MT_SEPIA:
-				_movietimeFilter = new CameraFilterSepiaFilm ();
-				break;
-			case CamStyle.MT_THERMAL:
-				_movietimeFilter = new CameraFilterThermal ();
-				break;
-			}
-			if (_movietimeFilter != null) {
-				_movietimeFilter.Activate (); // Is this necessary? who knows!
-			}
-		}
-
 		private void InitRTT() {
-			_camTex = new RenderTexture (1024, 768, 1, RenderTextureFormat.Default, RenderTextureReadWrite.sRGB);
+			_camTex = new RenderTexture (cameraRes.x, cameraRes.y, 1, RenderTextureFormat.Default, RenderTextureReadWrite.sRGB);
 			_camTex.isPowerOfTwo = false;
 			_camTex.Create ();
 
 			SetupMaterials ();
-				CameraFilter.InitializeAssets();
+			CameraFilter.InitializeAssets();
+			SetStyle (CamStyle.BlackAndWhite);
 
 			for (int i = 0; i < GameCameras.Length; i++) SetupCamera (i);
 		}
 
 		private void SetupMaterials() {
-			grayscaleMaterial = new Material (Shader.Find("Hidden/Grayscale Effect"));
-			Texture ramp = GameDatabase.Instance.GetTexture ("MunarIndustries/textures/ramp_grayscale", false);
-			grayscaleMaterial.SetTexture("_RampTex", ramp);
-			grayscaleMaterial.SetFloat("_RampOffset", 0);
-
 			overlay = GameDatabase.Instance.GetTexture ("MunarIndustries/textures/dockingcam", false);
+		}
 
+		private void UpdateCameraState() {	
+			for (int i = 0; i < 3; i++)
+				if (_cams[i] != null) _cams [i].enabled = isCamEnabled();
 		}
 
 		private void SetupCamera(int i) {
@@ -213,53 +339,49 @@ namespace Kasselblad
 				
 			_cams [i].fieldOfView = camFoV;
 			_cams [i].targetTexture = _camTex;
-			_cams [i].enabled = _camEnabled;
+			_cams [i].enabled = isCamEnabled();
 		}
 
 		virtual public void RenderCam(Vector3 pos, Vector3 aim, Quaternion rot) {
 			RenderTexture currentRT = RenderTexture.active;
 			RenderTexture.active = _camTex;
 
+			if (isCamEnabled ()) {
 
-			for (int i = 0; i < _cams.Length; i++) {
-				Camera cam = _cams[i];
-				if (cam == null) continue;
+				for (int i = 0; i < _cams.Length; i++) {
+					Camera cam = _cams [i];
+					if (cam == null)
+						continue;
 
-				if (i == 2 || i == 3) {
-					cam.transform.position = pos;
+					if (i == 2 || i == 3) {
+						cam.transform.position = pos;
+					}
+
+					cam.transform.forward = aim;
+					cam.transform.rotation = rot;
+
+					cam.fieldOfView = camFoV;
+					cam.targetTexture = _camTex;
+
+					cam.Render ();
 				}
 
-				cam.transform.forward = aim;
-				cam.transform.rotation = rot;
-
-				cam.fieldOfView = camFoV;
-				cam.targetTexture = _camTex;
-
-				cam.Render();
-			}
-
-			Graphics.Blit(_camTex, _camTex, dealphaMaterial);
-
-			// Now modify the texture to match our chosen style.
-			switch (_style) {
-			case CamStyle.LazorDP:
+				Graphics.Blit (_camTex, _camTex, dealphaMaterial);
 				
-				Graphics.Blit(_camTex, _camTex, grayscaleMaterial);
-
 				// DrawTexture is in world space, so we have to make an ortho matrix.
 				GL.PushMatrix();
 				GL.LoadOrtho();
 				Graphics.DrawTexture(new Rect(0, 0, 1, 1), overlay);
 				GL.PopMatrix();
-				break;
 
-			default:
-				if (_movietimeFilter != null) {
-					_movietimeFilter.RenderImageWithFilter(_camTex, _camTex);
-				}
-				break;
+			} else {
+				Graphics.Blit (_standbyTex, _camTex);
 			}
 
+			// Now modify the texture to match our chosen style.
+			if (_movietimeFilter != null) {
+				_movietimeFilter.RenderImageWithFilter(_camTex, _camTex);
+			}
 
 			RenderTexture.active = currentRT;
 		}
@@ -272,7 +394,8 @@ namespace Kasselblad
 			return null;
 		}
 
-		/*** Window management ***/
+		#endregion
+		#region GUI
 
 		private Rect _windowPosition = new Rect();
 		private GUIStyle _windowStyle = null;
@@ -298,19 +421,15 @@ namespace Kasselblad
 
 		private void OnWindow(int windowid)
 		{
-			GUILayoutOption[] viewSize = {GUILayout.Width (320), GUILayout.Height (240) };
+			GUILayoutOption[] viewSize = {GUILayout.Width (cameraRes.x), GUILayout.Height (cameraRes.y) };
 
 			// Perform window layout.
 			GUILayout.BeginVertical ();
 
-			if (_camEnabled) {
-				Quaternion rot = this.transform.rotation * Quaternion.Euler(0,180,0);
+				Quaternion rot = this.transform.rotation * Quaternion.Euler(cameraRot);
 
-				RenderCam(this.transform.position, this.transform.forward, rot);
+				RenderCam(this.transform.position + this.transform.rotation * cameraPos, this.transform.forward, rot);
 				GUILayout.Box (_camTex, viewSize);
-			} else {
-				GUILayout.Box ("Camera Off", viewSize);
-			}
 
 
 			var values = Enum.GetValues (typeof(Kasselblad.CamStyle));
@@ -320,14 +439,22 @@ namespace Kasselblad
 					SetStyle (value);
 			}
 
-			if (GUILayout.Button (Events ["toggleOnOff"].guiName))
-				toggleOnOff ();
+			if (!_camSwitchedOn) {
+				GUILayout.Label ("Camera Switched Off.");
+			} else if (!_hasPower) {
+				GUILayout.Label ("Insufficient electric charge!");
+			} else {
+				if (GUILayout.Button ("Take Science Photo"))
+					DoScience ();
+			}
 
 			GUILayout.EndVertical ();
 
 			// Makes the window draggable
 			GUI.DragWindow ();
 		}
+
+		#endregion
 	}
 
 }

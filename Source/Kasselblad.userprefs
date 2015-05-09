@@ -1,15 +1,6 @@
 ﻿<Properties StartupItem="Kasselblad.csproj">
-  <MonoDevelop.Ide.Workspace ActiveConfiguration="Debug" />
-  <MonoDevelop.Ide.Workbench ActiveDocument="MovieTime/CameraFilters/CameraFilter.cs">
-    <Files>
-      <File FileName="Kasselblad.cs" Line="180" Column="5" />
-      <File FileName="MovieTime/CameraFilters/CameraFilter.cs" Line="46" Column="33" />
-      <File FileName="MovieTime/CameraFilters/CameraFilterColorFilm.cs" Line="1" Column="1" />
-      <File FileName="MovieTime/CameraFilters/CameraFilterNightVision.cs" Line="1" Column="1" />
-      <File FileName="MovieTime/CameraFilters/CameraFilterBlackAndWhiteHiResTV.cs" Line="9" Column="48" />
-      <File FileName="MovieTime/CameraFilters/CameraFilterBlackAndWhiteLoResTV.cs" Line="9" Column="48" />
-    </Files>
-  </MonoDevelop.Ide.Workbench>
+  <MonoDevelop.Ide.Workspace ActiveConfiguration="Debug" PreferredExecutionTarget="MonoDevelop.Default" />
+  <MonoDevelop.Ide.Workbench />
   <MonoDevelop.Ide.DebuggingService.Breakpoints>
     <BreakpointStore />
   </MonoDevelop.Ide.DebuggingService.Breakpoints>
